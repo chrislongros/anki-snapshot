@@ -1,0 +1,24 @@
+#!/bin/bash
+# Wrapper to auto-snapshot after Anki closes
+# Install: ln -s /path/to/anki-wrapper ~/bin/anki
+# Ensure ~/bin is in PATH before /usr/bin
+
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+
+# Find real Anki executable (skip this wrapper)
+REAL_ANKI=""
+for p in /usr/bin/anki /usr/local/bin/anki ~/.local/bin/anki ~/ankidev/anki/run; do
+    [[ -x "$p" && "$(readlink -f "$p")" != "$(readlink -f "$0")" ]] && REAL_ANKI="$p" && break
+done
+[[ -z "$REAL_ANKI" ]] && echo "❌ Anki not found" && exit 1
+
+# Run Anki (from its directory if dev build)
+if [[ "$REAL_ANKI" == *ankidev* ]]; then
+    (cd "$(dirname "$REAL_ANKI")" && "$REAL_ANKI" "$@")
+else
+    "$REAL_ANKI" "$@"
+fi
+
+# Auto-snapshot after close
+echo "📸 Auto-snapshotting..."
+"$SCRIPT_DIR/anki-snapshot" && "$SCRIPT_DIR/anki-diff"
