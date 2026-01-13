@@ -5,32 +5,46 @@ cd "$BACKUP_DIR"
 QUERY="$1"
 [[ -z "$QUERY" ]] && echo "Usage: anki-search <pattern> [--history]" && exit 1
 
-GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+
+strip_html() {
+    sed 's/<[^>]*>//g; s/&nbsp;/ /g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/\^_/ | /g'
+}
 
 if [[ "$2" == "--history" ]]; then
-    echo -e "${BOLD}━━━ Search History for: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
-    git log --all -p -S "$QUERY" -- notes.txt | grep -E "^(commit|Date:|[\+\-].*$QUERY)" | while read -r line; do
+    echo -e "${BOLD}━━━ History Search: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
+    
+    git log --all -p -S "$QUERY" -- notes.txt | while IFS= read -r line; do
         if [[ "$line" =~ ^commit ]]; then
             echo -e "\n${YELLOW}${line}${RESET}"
         elif [[ "$line" =~ ^Date: ]]; then
             echo -e "${DIM}${line}${RESET}"
-        elif [[ "$line" =~ ^\+ ]]; then
-            echo -e "${GREEN}${line}${RESET}"
-        elif [[ "$line" =~ ^- ]]; then
-            echo -e "\033[0;31m${line}${RESET}"
+        elif [[ "$line" =~ ^\+.*$QUERY && ! "$line" =~ ^\+\+\+ ]]; then
+            clean=$(echo "${line:1}" | strip_html)
+            # Extract note ID
+            note_id=$(echo "$clean" | cut -d'|' -f1)
+            fields=$(echo "$clean" | cut -d'|' -f3- | head -c 200)
+            echo -e "${GREEN}+ [$note_id] $fields${RESET}"
+        elif [[ "$line" =~ ^-.*$QUERY && ! "$line" =~ ^--- ]]; then
+            clean=$(echo "${line:1}" | strip_html)
+            note_id=$(echo "$clean" | cut -d'|' -f1)
+            fields=$(echo "$clean" | cut -d'|' -f3- | head -c 200)
+            echo -e "${RED}− [$note_id] $fields${RESET}"
         fi
     done
 else
-    echo -e "${BOLD}━━━ Current Notes Matching: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
+    echo -e "${BOLD}━━━ Notes Matching: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
+    count=0
     grep -i "$QUERY" "$BACKUP_DIR/notes.txt" | while IFS='|' read -r id model fields rest; do
-        # Truncate and highlight
         display="${fields:0:120}"
         [[ ${#fields} -gt 120 ]] && display="${display}..."
         # Highlight match
-        display=$(echo "$display" | grep -i --color=always "$QUERY")
-        echo -e "${DIM}[$id]${RESET} $display"
-    done | head -20
+        highlighted=$(echo "$display" | grep -i --color=always "$QUERY")
+        echo -e "${DIM}[$id]${RESET} $highlighted"
+        ((count++))
+        [[ $count -ge 20 ]] && break
+    done
     
-    total=$(grep -ci "$QUERY" "$BACKUP_DIR/notes.txt" || echo 0)
-    echo -e "\n${DIM}Found $total matches (showing first 20). Use --history to search git history.${RESET}"
+    total=$(grep -ci "$QUERY" "$BACKUP_DIR/notes.txt" 2>/dev/null || echo 0)
+    echo -e "\n${DIM}Found $total matches (showing first 20). Use --history for git history.${RESET}"
 fi
