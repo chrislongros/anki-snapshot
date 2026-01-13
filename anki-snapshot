@@ -3,16 +3,20 @@ set -e
 ANKI_PROFILE="${ANKI_PROFILE:-$(ls -1 "${XDG_DATA_HOME:-$HOME/.local/share}/Anki2" 2>/dev/null | grep -v '^addons' | head -1)}"
 ANKI_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE"
 BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+
 [[ ! -d "$ANKI_DIR" ]] && echo "❌ Anki profile not found: $ANKI_DIR" && exit 1
 pgrep -x anki >/dev/null && echo "⚠️  Close Anki first!" && exit 1
 pgrep -f aqt >/dev/null && echo "⚠️  Close Anki first!" && exit 1
+
 mkdir -p "$BACKUP_DIR" && cd "$BACKUP_DIR"
-[[ ! -d .git ]] && git init && git lfs install && echo -e "*.png\n*.jpg\n*.jpeg\n*.gif\n*.mp3\n*.wav\n*.mp4\n*.webp\n*.svg" > .gitattributes && sed -i 's/$/ filter=lfs diff=lfs merge=lfs -text/' .gitattributes
+[[ ! -d .git ]] && git init && git lfs install && echo -e "*.png filter=lfs diff=lfs merge=lfs -text\n*.jpg filter=lfs diff=lfs merge=lfs -text\n*.jpeg filter=lfs diff=lfs merge=lfs -text\n*.gif filter=lfs diff=lfs merge=lfs -text\n*.mp3 filter=lfs diff=lfs merge=lfs -text\n*.wav filter=lfs diff=lfs merge=lfs -text\n*.mp4 filter=lfs diff=lfs merge=lfs -text\n*.webp filter=lfs diff=lfs merge=lfs -text\n*.svg filter=lfs diff=lfs merge=lfs -text" > .gitattributes
+
 echo "📦 Copying database..."
 cp "$ANKI_DIR/collection.anki2" "$BACKUP_DIR/"
+
 echo "📄 Exporting notes for diff..."
-sqlite3 "$BACKUP_DIR/collection.anki2" ".mode line
-SELECT n.id, n.mid AS model_id, replace(n.flds, char(31), ' | ') AS fields, n.tags FROM notes n ORDER BY n.id;" | sed 's/<img[^>]*src="\([^"]*\)"[^>]*>/[IMG:\1]/g; s/<[^>]*>//g; s/&nbsp;/ /g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g' > "$BACKUP_DIR/notes.txt"
+sqlite3 "$BACKUP_DIR/collection.anki2" "SELECT n.id, n.mid, replace(n.flds, char(31), ' | '), n.tags FROM notes n ORDER BY n.id;" | sed 's/<img[^>]*src="\([^"]*\)"[^>]*>/[IMG:\1]/g; s/<[^>]*>//g; s/&nbsp;/ /g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g' > "$BACKUP_DIR/notes.txt"
+
 echo "📝 Committing..."
 git add -A && git commit -m "Snapshot $(date '+%Y-%m-%d %H:%M')" || echo "No changes"
 echo "✅ Done!" && git log --oneline -3
