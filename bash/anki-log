@@ -6,7 +6,7 @@ COUNT="${1:-10}"
 
 echo -e "\033[1m━━━ Anki Snapshot History ━━━\033[0m\n"
 
-git log --oneline -n "$COUNT" --format="%h %s" | while read -r hash msg; do
+git log --oneline -n "$COUNT" --format="%h %ci %s" | while read -r hash msg; do
     # Get stats for this commit
     stats=$(git diff --shortstat "${hash}^..${hash}" -- notes.txt 2>/dev/null | sed 's/^ //')
     added=$(echo "$stats" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
