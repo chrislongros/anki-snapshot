@@ -1,14 +1,15 @@
 # anki-snapshot
 
-Git-based version control for Anki collections. Track changes to your flashcards with human-readable diffs.
+Git-based version control for Anki collections. Track flashcard changes with human-readable diffs.
 
 ## Features
 
 - 📦 Snapshot your Anki database to git
 - 📝 Human-readable diffs showing card changes
-- 🖼️ Clickable image links in diffs
+- 🖼️ Clickable image links in terminal
+- 🔍 Search notes and history
+- 📊 Snapshot history with stats
 - 🔄 Restore previous versions
-- 💾 Uses git-lfs for media files
 
 ## Requirements
 
@@ -18,21 +19,30 @@ Git-based version control for Anki collections. Track changes to your flashcards
 
 ## Installation
 ```bash
-git clone https://github.com/YOUR_USERNAME/anki-snapshot.git
+git clone https://github.com/chrislongros/anki-snapshot.git
 cd anki-snapshot
-chmod +x anki-snapshot anki-diff anki-restore
-sudo ln -s "$PWD/anki-snapshot" /usr/local/bin/
-sudo ln -s "$PWD/anki-diff" /usr/local/bin/
-sudo ln -s "$PWD/anki-restore" /usr/local/bin/
+chmod +x anki-*
+# Add to PATH
+echo 'export PATH="$PWD:$PATH"' >> ~/.bashrc
 ```
 
 ## Usage
 ```bash
-# Close Anki first, then:
-anki-snapshot          # Create snapshot
-anki-diff              # Show changes since last snapshot
-anki-diff HEAD~3..HEAD # Show changes across 3 snapshots
-anki-restore           # Restore from snapshot (with confirmation)
+anki-snapshot              # Create snapshot (close Anki first)
+anki-diff                  # Show changes since last snapshot
+anki-diff HEAD~3..HEAD     # Show changes across 3 snapshots
+anki-log                   # View snapshot history
+anki-log 20                # Show more history
+anki-search "mitochondria" # Find notes matching pattern
+anki-search "mitochondria" --history  # Search git history
+anki-restore               # Restore from snapshot (with confirmation)
+```
+
+## Auto-snapshot
+
+Add to your Anki launch alias:
+```bash
+alias anki='/usr/bin/anki; anki-snapshot && anki-diff'
 ```
 
 ## Configuration
