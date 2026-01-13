@@ -7,23 +7,24 @@ cd "$BACKUP_DIR"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
-echo -e "${BOLD}━━━ Anki Changes: $RANGE ━━━${RESET}"
+# Get timestamps
+OLD_HASH="${RANGE%%..*}"
+NEW_HASH="${RANGE##*..}"
+OLD_TIME=$(git log -1 --format="%ci" "$OLD_HASH" 2>/dev/null | cut -d' ' -f1,2)
+NEW_TIME=$(git log -1 --format="%ci" "$NEW_HASH" 2>/dev/null | cut -d' ' -f1,2)
+
+echo -e "${BOLD}━━━ Anki Changes ━━━${RESET}"
+echo -e "${DIM}From: $OLD_TIME → To: $NEW_TIME${RESET}\n"
 
 git diff "$RANGE" -- notes.txt | while IFS= read -r line; do
-    # Skip diff headers
-    [[ "$line" =~ ^(diff|index|---|\+\+\+|@@) ]] && [[ "$line" =~ ^@@ ]] && echo -e "\n${CYAN}────────────────────────────────────────${RESET}" && continue
     [[ "$line" =~ ^(diff|index|---|\+\+\+) ]] && continue
+    [[ "$line" =~ ^@@ ]] && echo -e "\n${CYAN}────────────────────────────────────────${RESET}" && continue
     
-    # Process added/removed lines
     if [[ "$line" =~ ^\+ ]]; then
         content="${line:1}"
-        # Extract note ID (first field)
         note_id="${content%%|*}"
-        # Get fields (skip id and model_id)
         fields=$(echo "$content" | cut -d'|' -f3-)
-        # Shorten image refs
         fields=$(echo "$fields" | sed 's/\[IMG:\([^]]*\)\]/[🖼 \1]/g')
-        # Truncate if too long
         [[ ${#fields} -gt 150 ]] && fields="${fields:0:150}..."
         echo -e "${GREEN}+ [${note_id}] ${fields}${RESET}"
     elif [[ "$line" =~ ^- ]]; then
@@ -36,7 +37,6 @@ git diff "$RANGE" -- notes.txt | while IFS= read -r line; do
     fi
 done
 
-# Image changes
 echo -e "\n${YELLOW}━━━ Image Changes ━━━${RESET}"
 PLAIN_DIFF=$(git diff "$RANGE" -- notes.txt)
 REMOVED=$(echo "$PLAIN_DIFF" | grep '^-' | grep -v '^---' | grep -oE '\[IMG:[^\]]+\]' | sed 's/\[IMG://g;s/\]//g' | sort -u)
