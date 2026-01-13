@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+ANKI_PROFILE="${ANKI_PROFILE:-$(ls -1 "${XDG_DATA_HOME:-$HOME/.local/share}/Anki2" 2>/dev/null | grep -v '^addons' | head -1)}"
+ANKI_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE"
+BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+pgrep -x anki >/dev/null && echo "⚠️  Close Anki first!" && exit 1
+pgrep -f aqt >/dev/null && echo "⚠️  Close Anki first!" && exit 1
+echo "⚠️  This will OVERWRITE your Anki database!"
+echo "   Source: $BACKUP_DIR/collection.anki2"
+echo "   Target: $ANKI_DIR/collection.anki2"
+read -p "Type 'yes' to confirm: " confirm
+[[ "$confirm" != "yes" ]] && echo "Cancelled." && exit 0
+echo "💾 Backing up current database..."
+cp "$ANKI_DIR/collection.anki2" "$ANKI_DIR/collection.anki2.bak-$(date +%s)"
+echo "📦 Restoring..."
+cp "$BACKUP_DIR/collection.anki2" "$ANKI_DIR/"
+echo "✅ Restored!"

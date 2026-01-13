@@ -1,0 +1,19 @@
+#!/bin/bash
+ANKI_PROFILE="${ANKI_PROFILE:-$(ls -1 "${XDG_DATA_HOME:-$HOME/.local/share}/Anki2" 2>/dev/null | grep -v '^addons' | head -1)}"
+MEDIA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE/collection.media"
+BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+RANGE="${1:-HEAD~1..HEAD}"
+cd "$BACKUP_DIR"
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+echo -e "${BOLD}━━━ Anki Changes: $RANGE ━━━${RESET}"
+git diff --word-diff=plain "$RANGE" -- notes.txt | awk 'BEGIN{R="\033[0;31m";G="\033[0;32m";C="\033[0;36m";B="\033[1m";X="\033[0m"}/^@@/{print"";print C"────────────────────────────────────────"X;next}/^[-+]{3}/||/model_id = /{next}/id = [0-9]+/{match($0,/id = ([0-9]+)/,a);if(a[1]!="")print B"📝 Note: "a[1]X;next}/fields = /{l=$0;gsub(/^[[:space:]]*fields = /,"",l);gsub(/\[IMG: file:\/\/[^\]]+\//,"[IMG:",l);gsub(/\[-/,R"[-",l);gsub(/-\]/,"-]"X,l);gsub(/\{\+/,G"{+",l);gsub(/\+\}/,"+}"X,l);gsub(/ \| +\| +\|/," | ",l);gsub(/ \| +\|/," | ",l);if(l~/\[-.*-\]/||l~/\{\+.*\+\}/){if(length(l)>300){s=index(l,"[-");if(s==0)s=index(l,"{+");if(s>100)l="..."substr(l,s-50);if(length(l)>300)l=substr(l,1,300)"..."}print l}next}'
+echo -e "\n${YELLOW}━━━ Image Changes ━━━${RESET}"
+PLAIN_DIFF=$(git diff "$RANGE" -- notes.txt)
+REMOVED=$(echo "$PLAIN_DIFF"|grep '^-'|grep -v '^---'|perl -nle 'print $1 while /\[IMG:[^\]]*?([^\/\]]+)\]/g'|sort -u)
+ADDED=$(echo "$PLAIN_DIFF"|grep '^+'|grep -v '^+++'|perl -nle 'print $1 while /\[IMG:[^\]]*?([^\/\]]+)\]/g'|sort -u)
+NEW_ONLY=$(comm -13 <(echo "$REMOVED"|sort) <(echo "$ADDED"|sort) 2>/dev/null|grep -v '^$')
+DEL_ONLY=$(comm -23 <(echo "$REMOVED"|sort) <(echo "$ADDED"|sort) 2>/dev/null|grep -v '^$')
+[[ -n "$NEW_ONLY" ]] && echo -e "${GREEN}Added:${RESET}" && echo "$NEW_ONLY"|while read -r img;do [[ -z "$img" ]]&&continue;echo -e "  ${GREEN}+ $img${RESET}";echo -e "    \033]8;;file://$MEDIA_DIR/$img\afile://$MEDIA_DIR/$img\033]8;;\a";done
+[[ -n "$DEL_ONLY" ]] && echo -e "${RED}Removed:${RESET}" && echo "$DEL_ONLY"|while read -r img;do [[ -z "$img" ]]&&continue;echo -e "  ${RED}− $img${RESET}";done
+[[ -z "$NEW_ONLY" && -z "$DEL_ONLY" ]] && echo -e "${DIM}  No image changes${RESET}"
+echo ""
