@@ -1,0 +1,29 @@
+#!/bin/bash
+BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+cd "$BACKUP_DIR"
+
+COUNT="${1:-10}"
+
+echo -e "\033[1m━━━ Anki Snapshot History ━━━\033[0m\n"
+
+git log --oneline -n "$COUNT" --format="%h %s" | while read -r hash msg; do
+    # Get stats for this commit
+    stats=$(git diff --shortstat "${hash}^..${hash}" -- notes.txt 2>/dev/null | sed 's/^ //')
+    added=$(echo "$stats" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+    removed=$(echo "$stats" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+    
+    # Color based on changes
+    if [[ "$added" -gt 0 && "$removed" -gt 0 ]]; then
+        symbol="📝"
+    elif [[ "$added" -gt 0 ]]; then
+        symbol="✅"
+    elif [[ "$removed" -gt 0 ]]; then
+        symbol="🗑️"
+    else
+        symbol="○"
+    fi
+    
+    echo -e "$symbol \033[33m$hash\033[0m $msg \033[2m(+$added/-$removed)\033[0m"
+done
+
+echo -e "\n\033[2mUsage: anki-diff <hash>~1..<hash> to see specific changes\033[0m"
