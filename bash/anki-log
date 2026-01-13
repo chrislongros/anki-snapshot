@@ -6,11 +6,14 @@ COUNT="${1:-10}"
 
 echo -e "\033[1m━━━ Anki Snapshot History ━━━\033[0m\n"
 
-git log --oneline -n "$COUNT" --format="%h %ci %s" | while read -r hash_date_msg; do
+git log --oneline -n "$COUNT" --format="%h|%ci|%s" | while IFS='|' read -r hash timestamp msg; do
     # Get stats for this commit
-    stats=$(git diff --shortstat "${hash}^..${hash}" -- notes.txt 2>/dev/null | sed 's/^ //')
+    stats=$(git diff --shortstat "${hash}^..${hash}" -- notes.txt 2>/dev/null)
     added=$(echo "$stats" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
     removed=$(echo "$stats" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo "0")
+    
+    # Format timestamp (just date and time)
+    ts=$(echo "$timestamp" | cut -d' ' -f1,2)
     
     # Color based on changes
     if [[ "$added" -gt 0 && "$removed" -gt 0 ]]; then
@@ -23,7 +26,7 @@ git log --oneline -n "$COUNT" --format="%h %ci %s" | while read -r hash_date_msg
         symbol="○"
     fi
     
-    echo -e "$symbol \033[33m$hash\033[0m $msg \033[2m(+$added/-$removed)\033[0m"
+    echo -e "$symbol \033[33m$hash\033[0m \033[2m$ts\033[0m $msg \033[2m(+$added/-$removed)\033[0m"
 done
 
 echo -e "\n\033[2mUsage: anki-diff <hash>~1..<hash> to see specific changes\033[0m"
