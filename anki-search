@@ -1,0 +1,36 @@
+#!/bin/bash
+BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+cd "$BACKUP_DIR"
+
+QUERY="$1"
+[[ -z "$QUERY" ]] && echo "Usage: anki-search <pattern> [--history]" && exit 1
+
+GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+
+if [[ "$2" == "--history" ]]; then
+    echo -e "${BOLD}━━━ Search History for: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
+    git log --all -p -S "$QUERY" -- notes.txt | grep -E "^(commit|Date:|[\+\-].*$QUERY)" | while read -r line; do
+        if [[ "$line" =~ ^commit ]]; then
+            echo -e "\n${YELLOW}${line}${RESET}"
+        elif [[ "$line" =~ ^Date: ]]; then
+            echo -e "${DIM}${line}${RESET}"
+        elif [[ "$line" =~ ^\+ ]]; then
+            echo -e "${GREEN}${line}${RESET}"
+        elif [[ "$line" =~ ^- ]]; then
+            echo -e "\033[0;31m${line}${RESET}"
+        fi
+    done
+else
+    echo -e "${BOLD}━━━ Current Notes Matching: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
+    grep -i "$QUERY" "$BACKUP_DIR/notes.txt" | while IFS='|' read -r id model fields rest; do
+        # Truncate and highlight
+        display="${fields:0:120}"
+        [[ ${#fields} -gt 120 ]] && display="${display}..."
+        # Highlight match
+        display=$(echo "$display" | grep -i --color=always "$QUERY")
+        echo -e "${DIM}[$id]${RESET} $display"
+    done | head -20
+    
+    total=$(grep -ci "$QUERY" "$BACKUP_DIR/notes.txt" || echo 0)
+    echo -e "\n${DIM}Found $total matches (showing first 20). Use --history to search git history.${RESET}"
+fi
