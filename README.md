@@ -71,3 +71,9 @@ Environment variables:
 ## License
 
 MIT
+
+## Screenshots
+
+<img width="2560" height="919" alt="Screenshot_20260117_120737" src="https://github.com/user-attachments/assets/f182a7f3-48af-4ab8-b466-483b15188968" />
+
+
