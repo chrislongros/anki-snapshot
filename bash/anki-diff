@@ -1,57 +1,128 @@
 #!/bin/bash
 ANKI_PROFILE="${ANKI_PROFILE:-$(ls -1 "${XDG_DATA_HOME:-$HOME/.local/share}/Anki2" 2>/dev/null | grep -v '^addons' | head -1)}"
-MEDIA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE/collection.media"
+ANKI_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE"
+MEDIA_DIR="$ANKI_DIR/collection.media"
 BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+TMP_DB="/tmp/anki-diff-$$.anki2"
 RANGE="${1:-HEAD~1..HEAD}"
 cd "$BACKUP_DIR"
 
+cp "$ANKI_DIR/collection.anki2" "$TMP_DB" 2>/dev/null
+trap "rm -f '$TMP_DB'" EXIT
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
-# Get timestamps
-OLD_HASH="${RANGE%%..*}"
-NEW_HASH="${RANGE##*..}"
+short_name() {
+    local f="$1" base="${f%.*}" ext="${f##*.}"
+    [[ ${#base} -gt 12 ]] && echo "${base:0:8}...$ext" || echo "$f"
+}
+
+make_clickable() {
+    local text="$1"
+    while [[ "$text" =~ \[IMG:([^\]]+)\] ]]; do
+        f="${BASH_REMATCH[1]}"; short=$(short_name "$f")
+        link=$(printf '\033]8;;file://%s/%s\a%s\033]8;;\a' "$MEDIA_DIR" "$f" "$short")
+        text="${text/\[IMG:$f\]/$link}"
+    done
+    while [[ "$text" =~ \[SND:([^\]]+)\] ]]; do
+        f="${BASH_REMATCH[1]}"; short=$(short_name "$f")
+        link=$(printf '\033]8;;file://%s/%s\a%s\033]8;;\a' "$MEDIA_DIR" "$f" "$short")
+        text="${text/\[SND:$f\]/$link}"
+    done
+    echo "$text"
+}
+
+declare -A FIELD_NAMES NOTETYPE_NAMES
+if [[ -f "$TMP_DB" ]]; then
+    while IFS='|' read -r ntid ord name; do
+        FIELD_NAMES["${ntid}_${ord}"]="$name"
+    done < <(sqlite3 "$TMP_DB" "SELECT ntid, ord, name FROM fields ORDER BY ntid, ord")
+    while IFS='|' read -r ntid name; do
+        NOTETYPE_NAMES["$ntid"]="$name"
+    done < <(sqlite3 "$TMP_DB" "SELECT id, name FROM notetypes")
+fi
+
+get_field_name() { echo "${FIELD_NAMES["${1}_${2}"]:-Field $((${2}+1))}"; }
+
+OLD_HASH="${RANGE%%..*}"; NEW_HASH="${RANGE##*..}"
 OLD_TIME=$(git log -1 --format="%ci" "$OLD_HASH" 2>/dev/null | cut -d' ' -f1,2)
 NEW_TIME=$(git log -1 --format="%ci" "$NEW_HASH" 2>/dev/null | cut -d' ' -f1,2)
-
 echo -e "${BOLD}━━━ Anki Changes ━━━${RESET}"
-echo -e "${DIM}From: $OLD_TIME → To: $NEW_TIME${RESET}\n"
+echo -e "${DIM}$OLD_TIME → $NEW_TIME${RESET}\n"
 
-git diff "$RANGE" -- notes.txt | while IFS= read -r line; do
-    [[ "$line" =~ ^(diff|index|---|\+\+\+) ]] && continue
-    [[ "$line" =~ ^@@ ]] && echo -e "\n${CYAN}────────────────────────────────────────${RESET}" && continue
+PLAIN_DIFF=$(git diff "$RANGE" -- notes.txt)
+
+declare -A OLD_NOTES NEW_NOTES NOTE_MODELS
+while IFS= read -r line; do
+    if [[ "$line" =~ ^-[^-] ]]; then
+        content="${line:1}"
+        nid=$(echo "$content" | cut -d'|' -f1)
+        mid=$(echo "$content" | cut -d'|' -f2)
+        OLD_NOTES["$nid"]="$content"
+        NOTE_MODELS["$nid"]="$mid"
+    elif [[ "$line" =~ ^\+[^+] ]]; then
+        content="${line:1}"
+        nid=$(echo "$content" | cut -d'|' -f1)
+        mid=$(echo "$content" | cut -d'|' -f2)
+        NEW_NOTES["$nid"]="$content"
+        NOTE_MODELS["$nid"]="$mid"
+    fi
+done <<< "$PLAIN_DIFF"
+
+declare -A PROCESSED
+for nid in "${!OLD_NOTES[@]}" "${!NEW_NOTES[@]}"; do
+    [[ -z "$nid" || -n "${PROCESSED[$nid]}" ]] && continue
+    PROCESSED["$nid"]=1
+    old="${OLD_NOTES[$nid]:-}"
+    new="${NEW_NOTES[$nid]:-}"
+    mid="${NOTE_MODELS[$nid]}"
+    ntname="${NOTETYPE_NAMES[$mid]:-Unknown}"
     
-    if [[ "$line" =~ ^\+ ]]; then
-        content="${line:1}"
-        note_id="${content%%|*}"
-        fields=$(echo "$content" | cut -d'|' -f3-)
-        fields=$(echo "$fields" | sed 's/\[IMG:\([^]]*\)\]/[🖼 \1]/g')
-        [[ ${#fields} -gt 150 ]] && fields="${fields:0:150}..."
-        echo -e "${GREEN}+ [${note_id}] ${fields}${RESET}"
-    elif [[ "$line" =~ ^- ]]; then
-        content="${line:1}"
-        note_id="${content%%|*}"
-        fields=$(echo "$content" | cut -d'|' -f3-)
-        fields=$(echo "$fields" | sed 's/\[IMG:\([^]]*\)\]/[🖼 \1]/g')
-        [[ ${#fields} -gt 150 ]] && fields="${fields:0:150}..."
-        echo -e "${RED}− [${note_id}] ${fields}${RESET}"
+    if [[ -n "$old" && -z "$new" ]]; then
+        echo -e "${RED}━━━ Deleted [$ntname] ━━━${RESET}"
+        echo -e "${DIM}ID: $nid${RESET}"
+        fields=$(echo "$old" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+        echo -e "${DIM}$(make_clickable "$fields")${RESET}\n"
+    elif [[ -z "$old" && -n "$new" ]]; then
+        echo -e "${GREEN}━━━ Added [$ntname] ━━━${RESET}"
+        echo -e "${DIM}ID: $nid${RESET}"
+        fields=$(echo "$new" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+        echo -e "$(make_clickable "$fields")\n"
+    elif [[ -n "$old" && -n "$new" ]]; then
+        echo -e "${YELLOW}━━━ Modified [$ntname] ━━━${RESET}"
+        echo -e "${DIM}ID: $nid${RESET}"
+        old_fields=$(echo "$old" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+        new_fields=$(echo "$new" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+        IFS='|' read -ra OF <<< "$old_fields"
+        IFS='|' read -ra NF <<< "$new_fields"
+        max=${#OF[@]}; [[ ${#NF[@]} -gt $max ]] && max=${#NF[@]}
+        for ((i=0; i<max; i++)); do
+            o="${OF[$i]:-}"; n="${NF[$i]:-}"
+            o=$(echo "$o" | xargs 2>/dev/null || echo "$o")
+            n=$(echo "$n" | xargs 2>/dev/null || echo "$n")
+            fname=$(get_field_name "$mid" "$i")
+            [[ "$o" != "$n" ]] && {
+                echo -e "  ${CYAN}$fname:${RESET}"
+                [[ -n "$o" ]] && echo -e "    ${RED}- $(make_clickable "$o")${RESET}"
+                [[ -n "$n" ]] && echo -e "    ${GREEN}+ $(make_clickable "$n")${RESET}"
+            }
+        done
+        echo ""
     fi
 done
 
-echo -e "\n${YELLOW}━━━ Image Changes ━━━${RESET}"
-PLAIN_DIFF=$(git diff "$RANGE" -- notes.txt)
-REMOVED=$(echo "$PLAIN_DIFF" | grep '^-' | grep -v '^---' | grep -oE '\[IMG:[^\]]+\]' | sed 's/\[IMG://g;s/\]//g' | sort -u)
-ADDED=$(echo "$PLAIN_DIFF" | grep '^+' | grep -v '^+++' | grep -oE '\[IMG:[^\]]+\]' | sed 's/\[IMG://g;s/\]//g' | sort -u)
+echo -e "${YELLOW}━━━ Image Changes ━━━${RESET}"
+REMOVED=$(echo "$PLAIN_DIFF" | grep '^-' | grep -v '^---' | grep -oP '\[IMG:\K[^\]]+' | sort -u)
+ADDED=$(echo "$PLAIN_DIFF" | grep '^+' | grep -v '^+++' | grep -oP '\[IMG:\K[^\]]+' | sort -u)
 NEW_ONLY=$(comm -13 <(echo "$REMOVED" | sort) <(echo "$ADDED" | sort) 2>/dev/null | grep -v '^$')
 DEL_ONLY=$(comm -23 <(echo "$REMOVED" | sort) <(echo "$ADDED" | sort) 2>/dev/null | grep -v '^$')
-
 [[ -n "$NEW_ONLY" ]] && echo -e "${GREEN}Added:${RESET}" && echo "$NEW_ONLY" | while read -r img; do
-    [[ -z "$img" ]] && continue
-    echo -e "  ${GREEN}+ $img${RESET}"
-    echo -e "    \033]8;;file://$MEDIA_DIR/$img\afile://$MEDIA_DIR/$img\033]8;;\a"
+    [[ -z "$img" ]] && continue; short=$(short_name "$img")
+    printf "  ${GREEN}+ \033]8;;file://%s/%s\a%s\033]8;;\a${RESET}\n" "$MEDIA_DIR" "$img" "$short"
 done
 [[ -n "$DEL_ONLY" ]] && echo -e "${RED}Removed:${RESET}" && echo "$DEL_ONLY" | while read -r img; do
-    [[ -z "$img" ]] && continue
-    echo -e "  ${RED}− $img${RESET}"
+    [[ -z "$img" ]] && continue; short=$(short_name "$img")
+    printf "  ${RED}- \033]8;;file://%s/%s\a%s\033]8;;\a${RESET}\n" "$MEDIA_DIR" "$img" "$short"
 done
-[[ -z "$NEW_ONLY" && -z "$DEL_ONLY" ]] && echo -e "${DIM}  No image changes${RESET}"
+[[ -z "$NEW_ONLY" && -z "$DEL_ONLY" ]] && echo -e "${DIM}No image changes${RESET}"
 echo ""

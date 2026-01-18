@@ -1,50 +1,93 @@
 #!/bin/bash
+ANKI_PROFILE="${ANKI_PROFILE:-$(ls -1 "${XDG_DATA_HOME:-$HOME/.local/share}/Anki2" 2>/dev/null | grep -v '^addons' | head -1)}"
+ANKI_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/Anki2/$ANKI_PROFILE"
+MEDIA_DIR="$ANKI_DIR/collection.media"
 BACKUP_DIR="${ANKI_SNAPSHOT_DIR:-$HOME/anki-snapshot}"
+TMP_DB="/tmp/anki-search-$$.anki2"
 cd "$BACKUP_DIR"
-
 QUERY="$1"
 [[ -z "$QUERY" ]] && echo "Usage: anki-search <pattern> [--history]" && exit 1
 
-GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+cp "$ANKI_DIR/collection.anki2" "$TMP_DB" 2>/dev/null
+trap "rm -f '$TMP_DB'" EXIT
 
-strip_html() {
-    sed 's/<[^>]*>//g; s/&nbsp;/ /g; s/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g; s/\^_/ | /g'
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+
+short_name() {
+    local f="$1" base="${f%.*}" ext="${f##*.}"
+    [[ ${#base} -gt 12 ]] && echo "${base:0:8}...$ext" || echo "$f"
 }
+
+make_clickable() {
+    local text="$1"
+    while [[ "$text" =~ \[IMG:([^\]]+)\] ]]; do
+        f="${BASH_REMATCH[1]}"; short=$(short_name "$f")
+        link=$(printf '\033]8;;file://%s/%s\a%s\033]8;;\a' "$MEDIA_DIR" "$f" "$short")
+        text="${text/\[IMG:$f\]/$link}"
+    done
+    while [[ "$text" =~ \[SND:([^\]]+)\] ]]; do
+        f="${BASH_REMATCH[1]}"; short=$(short_name "$f")
+        link=$(printf '\033]8;;file://%s/%s\a%s\033]8;;\a' "$MEDIA_DIR" "$f" "$short")
+        text="${text/\[SND:$f\]/$link}"
+    done
+    echo "$text"
+}
+
+declare -A FIELD_NAMES NOTETYPE_NAMES
+if [[ -f "$TMP_DB" ]]; then
+    while IFS='|' read -r ntid ord name; do
+        FIELD_NAMES["${ntid}_${ord}"]="$name"
+    done < <(sqlite3 "$TMP_DB" "SELECT ntid, ord, name FROM fields ORDER BY ntid, ord")
+    while IFS='|' read -r ntid name; do
+        NOTETYPE_NAMES["$ntid"]="$name"
+    done < <(sqlite3 "$TMP_DB" "SELECT id, name FROM notetypes")
+fi
+
+get_field_name() { echo "${FIELD_NAMES["${1}_${2}"]:-Field $((${2}+1))}"; }
 
 if [[ "$2" == "--history" ]]; then
     echo -e "${BOLD}━━━ History Search: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
-    
     git log --all -p -S "$QUERY" -- notes.txt | while IFS= read -r line; do
-        if [[ "$line" =~ ^commit ]]; then
-            echo -e "\n${YELLOW}${line}${RESET}"
-        elif [[ "$line" =~ ^Date: ]]; then
-            echo -e "${DIM}${line}${RESET}"
-        elif [[ "$line" =~ ^\+.*$QUERY && ! "$line" =~ ^\+\+\+ ]]; then
-            clean=$(echo "${line:1}" | strip_html)
-            # Extract note ID
-            note_id=$(echo "$clean" | cut -d'|' -f1)
-            fields=$(echo "$clean" | cut -d'|' -f3- | head -c 200)
-            echo -e "${GREEN}+ [$note_id] $fields${RESET}"
-        elif [[ "$line" =~ ^-.*$QUERY && ! "$line" =~ ^--- ]]; then
-            clean=$(echo "${line:1}" | strip_html)
-            note_id=$(echo "$clean" | cut -d'|' -f1)
-            fields=$(echo "$clean" | cut -d'|' -f3- | head -c 200)
-            echo -e "${RED}− [$note_id] $fields${RESET}"
+        [[ "$line" =~ ^commit ]] && echo -e "\n${YELLOW}${line}${RESET}" && continue
+        [[ "$line" =~ ^Date: ]] && echo -e "${DIM}${line}${RESET}" && continue
+        if [[ "$line" =~ ^\+[^+] ]]; then
+            content="${line:1}"
+            nid=$(echo "$content" | cut -d'|' -f1)
+            mid=$(echo "$content" | cut -d'|' -f2)
+            ntname="${NOTETYPE_NAMES[$mid]:-Unknown}"
+            fields=$(echo "$content" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+            fields=$(make_clickable "$fields")
+            echo -e "${GREEN}+ [$nid] [$ntname] $fields${RESET}"
+        elif [[ "$line" =~ ^-[^-] ]]; then
+            content="${line:1}"
+            nid=$(echo "$content" | cut -d'|' -f1)
+            mid=$(echo "$content" | cut -d'|' -f2)
+            ntname="${NOTETYPE_NAMES[$mid]:-Unknown}"
+            fields=$(echo "$content" | cut -d'|' -f3- | sed 's/|[^|]*$//')
+            fields=$(make_clickable "$fields")
+            echo -e "${RED}- [$nid] [$ntname] $fields${RESET}"
         fi
     done
 else
     echo -e "${BOLD}━━━ Notes Matching: ${YELLOW}$QUERY${RESET} ${BOLD}━━━${RESET}\n"
     count=0
-    grep -i "$QUERY" "$BACKUP_DIR/notes.txt" | while IFS='|' read -r id model fields rest; do
-        display="${fields:0:120}"
-        [[ ${#fields} -gt 120 ]] && display="${display}..."
-        # Highlight match
-        highlighted=$(echo "$display" | grep -i --color=always "$QUERY")
-        echo -e "${DIM}[$id]${RESET} $highlighted"
-        ((count++))
-        [[ $count -ge 20 ]] && break
+    grep -i "$QUERY" "$BACKUP_DIR/notes.txt" | while IFS='|' read -r nid mid rest; do
+        ((count++)); [[ $count -gt 20 ]] && break
+        ntname="${NOTETYPE_NAMES[$mid]:-Unknown}"
+        fields=$(echo "$rest" | sed 's/|[^|]*$//')
+        echo -e "${DIM}[$nid]${RESET} ${CYAN}[$ntname]${RESET}"
+        IFS='|' read -ra F <<< "$fields"
+        for ((i=0; i<${#F[@]}; i++)); do
+            fname=$(get_field_name "$mid" "$i")
+            fval="${F[$i]}"
+            if echo "$fval" | grep -qi "$QUERY"; then
+                fval=$(make_clickable "$fval")
+                highlighted=$(echo "$fval" | grep -i --color=always "$QUERY")
+                echo -e "  ${CYAN}$fname:${RESET} $highlighted"
+            fi
+        done
+        echo ""
     done
-    
     total=$(grep -ci "$QUERY" "$BACKUP_DIR/notes.txt" 2>/dev/null || echo 0)
-    echo -e "\n${DIM}Found $total matches (showing first 20). Use --history for git history.${RESET}"
+    echo -e "${DIM}Found $total matches (showing first 20). Use --history for git history.${RESET}"
 fi
